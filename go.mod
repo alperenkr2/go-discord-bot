@@ -1,6 +1,6 @@
 module go-discord-bot
 
-go 1.18
+go 1.22
 
 require (
 	github.com/bwmarrin/discordgo v0.27.1
