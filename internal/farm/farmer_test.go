@@ -16,11 +16,13 @@ import (
 
 type fakeCommander struct{}
 
-func (fakeCommander) Send(context.Context, string) error   { return nil }
-func (fakeCommander) Hunt(context.Context) error           { return nil }
-func (fakeCommander) Battle(context.Context, string) error { return nil }
-func (fakeCommander) Pray(context.Context) error           { return nil }
-func (fakeCommander) Inventory(context.Context) error      { return nil }
+func (fakeCommander) Send(context.Context, string) error     { return nil }
+func (fakeCommander) Hunt(context.Context) error             { return nil }
+func (fakeCommander) Battle(context.Context, string) error   { return nil }
+func (fakeCommander) Pray(context.Context) error             { return nil }
+func (fakeCommander) Inventory(context.Context) error        { return nil }
+func (fakeCommander) OpenWeaponCrates(context.Context) error { return nil }
+func (fakeCommander) SellWeapons(context.Context) error      { return nil }
 
 type fakeMessenger struct{}
 
@@ -59,6 +61,8 @@ func TestFarmerConcurrentControl(t *testing.T) {
 				f.SetBattleFriends(true)
 				f.HandleOwO("you caught a **rabbit**")
 				f.HandleOwO("please complete the captcha")
+				f.StartSell("channel-123")
+				f.HandleOwO("__**Inventory**__ no crates here")
 				f.ClearCaptcha()
 				f.SetFast(false)
 				f.Stop()

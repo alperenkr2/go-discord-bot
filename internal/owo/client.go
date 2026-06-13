@@ -130,9 +130,10 @@ func (c *Client) throttle() {
 
 // --- typed command helpers -------------------------------------------------
 
-func (c *Client) Hunt(ctx context.Context) error      { return c.Send(ctx, "owo h") }
-func (c *Client) Pray(ctx context.Context) error      { return c.Send(ctx, "owo pray") }
-func (c *Client) Inventory(ctx context.Context) error { return c.Send(ctx, "owo inv") }
+func (c *Client) Hunt(ctx context.Context) error             { return c.Send(ctx, "owo h") }
+func (c *Client) Pray(ctx context.Context) error             { return c.Send(ctx, "owo pray") }
+func (c *Client) Inventory(ctx context.Context) error        { return c.Send(ctx, "owo inv") }
+func (c *Client) OpenWeaponCrates(ctx context.Context) error { return c.Send(ctx, "owo wc all") }
 
 // Battle attacks; if friendID is set it battles that user.
 func (c *Client) Battle(ctx context.Context, friendID string) error {
@@ -143,14 +144,15 @@ func (c *Client) Battle(ctx context.Context, friendID string) error {
 	return c.Send(ctx, cmd)
 }
 
-// SellWeapons checks weapons then sells each rarity tier, spacing the commands
-// out as OwO expects. Honours ctx cancellation between steps.
+// SellWeapons sells each weapon rarity tier, spacing the commands out as OwO
+// expects. Crate opening is handled separately (see OpenWeaponCrates). Honours
+// ctx cancellation between steps. Note: OwO shows a confirmation button per sell
+// that the operator currently taps manually.
 func (c *Client) SellWeapons(ctx context.Context) error {
 	steps := []struct {
 		cmd  string
 		wait time.Duration
 	}{
-		{"owo wc all", 5 * time.Second},
 		{"owo sell uncommonweapons", 3 * time.Second},
 		{"owo sell commonweapons", 3 * time.Second},
 		{"owo sell rareweapons", 3 * time.Second},

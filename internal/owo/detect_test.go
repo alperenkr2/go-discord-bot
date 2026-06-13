@@ -86,3 +86,14 @@ func TestBuildUseCommandNoGems(t *testing.T) {
 		t.Error("expected ok=false when no gems are present")
 	}
 }
+
+func TestParseWeaponCrates(t *testing.T) {
+	// Real OwO inventory format: `CODE`<:emoji:id> then quantity in superscript.
+	inv := "`056`<:mgem1:492572122590478356>⁰⁰⁹    `100`<a:weaponcrate:725570544065445919>⁵⁷⁴    `101`<:box:427352600476647425>⁰⁰⁶"
+	if n, ok := ParseWeaponCrates(inv); !ok || n != 574 {
+		t.Errorf("ParseWeaponCrates() = (%d, %v), want (574, true)", n, ok)
+	}
+	if _, ok := ParseWeaponCrates("`051`<:cgem1:492572122120585240>⁰⁷⁵"); ok {
+		t.Error("expected ok=false when item 100 is absent")
+	}
+}

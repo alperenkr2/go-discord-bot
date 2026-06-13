@@ -20,7 +20,6 @@ import (
 const (
 	thumbsUp             = "👍"
 	disconnectAlertAfter = 30 * time.Second
-	oneShotTimeout       = 60 * time.Second
 )
 
 // Handler holds the dependencies the discord event handlers need.
@@ -70,10 +69,12 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 
 	content := strings.TrimSpace(m.Content)
 
-	// React to OwO's messages (captcha/ban/hunt/inventory).
-	h.farmer.HandleOwO(content)
+	// React to OwO's messages (captcha/ban/hunt/inventory). Read every text
+	// source, not just m.Content — OwO often sends Components V2 messages whose
+	// content field is empty and whose text lives inside components.
+	h.farmer.HandleOwO(extractText(m.Message))
 
-	// Handle operator control commands.
+	// Handle operator control commands (always plain text the user typed).
 	switch strings.ToLower(content) {
 	case "sa":
 		h.farmer.ClearCaptcha()
@@ -93,7 +94,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		h.farmer.Stop()
 		h.react(m, thumbsUp)
 	case "sell ww":
-		go h.sellWeapons(m.ChannelID)
+		h.farmer.StartSell(m.ChannelID)
 	case "ping":
 		go h.ping(m.ChannelID, m.ID)
 	}
@@ -110,18 +111,6 @@ func (h *Handler) ping(channelID, messageID string) {
 		return
 	}
 	h.reactID(channelID, messageID, thumbsUp)
-}
-
-func (h *Handler) sellWeapons(channelID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), oneShotTimeout)
-	defer cancel()
-
-	if err := h.client.SellWeapons(ctx); err != nil {
-		h.logger.Warn("sell weapons failed", "err", err)
-		h.reply(channelID, "weapon satışı başarısız oldu")
-		return
-	}
-	h.reply(channelID, "weaponlar satıldı")
 }
 
 func (h *Handler) onConnect(_ *discordgo.Session, _ *discordgo.Connect) {
