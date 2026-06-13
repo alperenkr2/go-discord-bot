@@ -73,3 +73,18 @@ func appendText(b *strings.Builder, s string) {
 	}
 	b.WriteString(s)
 }
+
+func authorID(u *discordgo.User) string {
+	if u == nil {
+		return "?"
+	}
+	return u.ID
+}
+
+func truncateText(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}

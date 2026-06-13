@@ -173,6 +173,16 @@ func (f *Farmer) HandleOwO(content string) {
 	}
 }
 
+// HandleOwOUpdate reacts to an edited OwO message. OwO often delivers the captcha
+// (and its escalating "(n/5)" counter) by editing a message, so the critical
+// captcha/ban signals are re-checked on edits too — but not the gem/inventory
+// flow, to avoid re-triggering it on every unrelated edit.
+func (f *Farmer) HandleOwOUpdate(content string) {
+	if owo.IsCaptcha(content) || owo.IsBan(content) {
+		f.onCaptcha(content)
+	}
+}
+
 func (f *Farmer) run(ctx context.Context) {
 	f.logger.Info("farm loop started")
 	defer f.logger.Info("farm loop stopped")

@@ -2,14 +2,39 @@
 // OwO's replies (captcha, ban, hunt result, inventory).
 package owo
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
+
+// stripInvisible removes zero-width / invisible format characters. OwO injects
+// characters like U+200B (zero-width space) *inside* words — e.g. "c​aptcha",
+// "ver​ify", "hu​man" — specifically to defeat naive substring matching.
+// Dropping every Unicode "Cf" (format) rune undoes that without touching
+// visible text.
+func stripInvisible(content string) string {
+	var b strings.Builder
+	b.Grow(len(content))
+	for _, r := range content {
+		if unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// normalize strips invisible characters and lowercases, for case-insensitive
+// keyword matching.
+func normalize(content string) string {
+	return strings.ToLower(stripInvisible(content))
+}
 
 // IsCaptcha reports whether content looks like an OwO captcha / verification
-// prompt. OwO phrases these a few different ways and may deliver them in a DM,
-// so we match case-insensitively on the strong signals ("captcha", or a
-// "verify ... human" pairing) instead of the old single literal "captcha".
+// prompt. It matches on the strong signals ("captcha", or a "verify ... human"
+// pairing) after normalization, so zero-width-space evasion does not slip past.
 func IsCaptcha(content string) bool {
-	c := strings.ToLower(content)
+	c := normalize(content)
 	switch {
 	case strings.Contains(c, "captcha"):
 		return true
@@ -26,16 +51,18 @@ func IsCaptcha(content string) bool {
 
 // IsBan reports whether content looks like an OwO ban / blacklist notice.
 func IsBan(content string) bool {
-	c := strings.ToLower(content)
+	c := normalize(content)
 	return strings.Contains(c, "banned") || strings.Contains(c, "blacklist")
 }
 
 // IsCaught reports whether content is a hunt result (triggers an inventory check).
 func IsCaught(content string) bool {
-	return strings.Contains(strings.ToLower(content), "caught")
+	return strings.Contains(normalize(content), "caught")
 }
 
-// IsInventory reports whether content is an OwO inventory listing.
+// IsInventory reports whether content is an OwO inventory listing. It keeps the
+// "Inventory" header's capitalization (after stripping invisible characters) to
+// avoid matching the lowercase word in ordinary chatter.
 func IsInventory(content string) bool {
-	return strings.Contains(content, "Inventory")
+	return strings.Contains(stripInvisible(content), "Inventory")
 }

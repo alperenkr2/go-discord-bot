@@ -13,6 +13,8 @@ func TestIsCaptcha(t *testing.T) {
 		{"verify + human DM", "Please verify that you are a human!", true},
 		{"real human phrasing", "Are you a real human? Click the link.", true},
 		{"uppercase", "CAPTCHA DETECTED", true},
+		{"real owo captcha", "⚠️ | <@123456789012345678>! Please complete your captcha to verify that you are human! (2/5)", true},
+		{"zero-width-space evasion", "⚠️ | <@123>! Pl​ease c​omplete yo​ur c​aptcha t​o ver​ify th​at y​ou a​re hu​man! (2/5)", true},
 		{"normal hunt result", "**alper** caught a common **dog**!", false},
 		{"lone human word", "haha you are such a human being", false},
 		{"command echo", "owo h", false},

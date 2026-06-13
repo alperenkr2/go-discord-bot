@@ -52,6 +52,7 @@ func New(session *discordgo.Session, cfg *config.Config, farmer *farm.Farmer, cl
 		discordgo.IntentsDirectMessages
 
 	session.AddHandler(h.onMessageCreate)
+	session.AddHandler(h.onMessageUpdate)
 	session.AddHandler(h.onConnect)
 	session.AddHandler(h.onDisconnect)
 	session.AddHandler(h.onResumed)
@@ -72,7 +73,9 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	// React to OwO's messages (captcha/ban/hunt/inventory). Read every text
 	// source, not just m.Content — OwO often sends Components V2 messages whose
 	// content field is empty and whose text lives inside components.
-	h.farmer.HandleOwO(extractText(m.Message))
+	text := extractText(m.Message)
+	h.logger.Debug("message create", "author", authorID(m.Author), "extracted", truncateText(text, 280))
+	h.farmer.HandleOwO(text)
 
 	// Handle operator control commands (always plain text the user typed).
 	switch strings.ToLower(content) {
@@ -98,6 +101,21 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	case "ping":
 		go h.ping(m.ChannelID, m.ID)
 	}
+}
+
+// onMessageUpdate handles edited messages. OwO frequently delivers the captcha
+// via an edit (e.g. the escalating "(2/5)" counter), so we re-run the critical
+// captcha/ban check on updates — these would otherwise be missed entirely.
+func (h *Handler) onMessageUpdate(s *discordgo.Session, m *discordgo.MessageUpdate) {
+	if m.Message == nil {
+		return
+	}
+	if m.Author != nil && s.State != nil && s.State.User != nil && m.Author.ID == s.State.User.ID {
+		return // ignore our own messages
+	}
+	text := extractText(m.Message)
+	h.logger.Debug("message update", "author", authorID(m.Author), "extracted", truncateText(text, 280))
+	h.farmer.HandleOwOUpdate(text)
 }
 
 func (h *Handler) ping(channelID, messageID string) {
