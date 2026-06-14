@@ -21,12 +21,15 @@ import (
 
 const (
 	sendFailureThreshold = 3
-	coverTextLen         = 10
-	coverCharset         = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	oneShotTimeout       = 30 * time.Second
 
 	cratesPerOpen     = 20               // "owo wc all" opens up to 20 crates
 	crateOpenCooldown = 30 * time.Second // OwO cooldown between "owo wc all" calls
+
+	activeCheckInterval = 5 * time.Minute  // re-check while sleeping outside active hours
+	quotaCheckInterval  = 10 * time.Minute // re-check while the daily hunt cap is hit
+	humanMsgMinInterval = 50 * time.Second // floor between human-like chat messages
+	breakJitterFraction = 0.30             // ± jitter applied to break durations
 
 	captchaMsg         = "CAPTCHA/BAN algılandı! OwO farming durduruldu. Captcha'yı çöz, sonra kanala 'sa' (sustur) veya 'owoh' (devam) yaz."
 	captchaReminderMsg = "CAPTCHA hâlâ bekliyor — farming durmuş durumda. Çözünce 'owoh' ile devam et, 'dur' ile tamamen durdur."
@@ -42,6 +45,7 @@ type commander interface {
 	Inventory(ctx context.Context) error
 	OpenWeaponCrates(ctx context.Context) error
 	SellWeapons(ctx context.Context) error
+	Coinflip(ctx context.Context, amount int) error
 }
 
 // messenger is the subset of *discordgo.Session used to post status replies.
@@ -64,6 +68,14 @@ type Farmer struct {
 	channelID     string
 	sendFailures  int
 	sellPending   bool               // next inventory drives the sell flow, not gem use
+	huntsToday    int                // hunts performed today (for the daily limit)
+	huntDay       int                // YearDay that huntsToday belongs to
+	lastHuman     time.Time          // last human-message time (throttle)
+	gambleDay     int                // YearDay the gamble counters belong to
+	gamblesToday  int                // coinflips played today
+	gambleNet     int                // net cowoncy from today's coinflips
+	pendingBet    int                // bet awaiting a result (0 = none)
+	gambleStopped bool               // loss-limit alert already sent today
 	cancel        context.CancelFunc // cancels the farm loop
 	captchaCancel context.CancelFunc // cancels the captcha reminder
 	sellCancel    context.CancelFunc // cancels an in-progress sell/crate-open flow
@@ -170,6 +182,8 @@ func (f *Farmer) HandleOwO(content string) {
 				return f.client.Send(ctx, cmd)
 			})
 		}
+	case owo.IsCoinflipResult(content):
+		f.resolveGamble(content)
 	}
 }
 
@@ -180,6 +194,10 @@ func (f *Farmer) HandleOwO(content string) {
 func (f *Farmer) HandleOwOUpdate(content string) {
 	if owo.IsCaptcha(content) || owo.IsBan(content) {
 		f.onCaptcha(content)
+		return
+	}
+	if owo.IsCoinflipResult(content) {
+		f.resolveGamble(content)
 	}
 }
 
@@ -188,11 +206,20 @@ func (f *Farmer) run(ctx context.Context) {
 	defer f.logger.Info("farm loop stopped")
 
 	for i := 0; ; i++ {
+		// Sleep through inactive hours and respect the daily hunt cap — running
+		// 24/7 at a steady pace is the biggest captcha trigger.
+		if !f.waitForActiveHours(ctx) {
+			return
+		}
+		if !f.waitForDailyQuota(ctx) {
+			return
+		}
+
 		fast, friend := f.snapshot()
 
 		delay := f.delay(fast)
 		if f.cfg.CoverMessage {
-			f.sendCover(ctx, delay)
+			f.sendHumanMessage(ctx)
 		}
 		if !sleepCtx(ctx, delay) {
 			return
@@ -201,6 +228,7 @@ func (f *Farmer) run(ctx context.Context) {
 		if f.do(ctx, f.client.Hunt) {
 			return
 		}
+		f.recordHunt()
 		if !sleepCtx(ctx, time.Second) {
 			return
 		}
@@ -220,7 +248,18 @@ func (f *Farmer) run(ctx context.Context) {
 				return
 			}
 			f.reply(fmt.Sprintf("%d kere çalıştım, azıcık mola veriyorum", i+1))
+			f.maybeGamble(ctx)
 			if !sleepCtx(ctx, f.breakDuration(fast)) {
+				return
+			}
+		}
+
+		// Occasional longer "stepped away" break — humanizes the rhythm.
+		if f.cfg.LongBreakEvery > 0 && (i+1)%f.cfg.LongBreakEvery == 0 {
+			d := f.randomLongBreak()
+			f.logger.Info("taking a long break", "duration", d)
+			f.reply("biraz ara veriyorum, birazdan dönerim")
+			if !sleepCtx(ctx, d) {
 				return
 			}
 		}
@@ -437,14 +476,221 @@ func (f *Farmer) breakDuration(fast bool) time.Duration {
 	if fast {
 		return f.cfg.FastDelay
 	}
-	return f.cfg.BreakDuration
+	return jitter(f.cfg.BreakDuration, breakJitterFraction)
 }
 
-func (f *Farmer) sendCover(ctx context.Context, d time.Duration) {
-	text := fmt.Sprintf("%d sn cooldown. %s", int(d.Seconds()), randomText(coverTextLen))
-	if err := f.client.Send(ctx, text); err != nil {
-		f.logger.Warn("cover message failed", "err", err)
+func (f *Farmer) randomLongBreak() time.Duration {
+	min, max := f.cfg.LongBreakMin, f.cfg.LongBreakMax
+	if max <= min {
+		return min
 	}
+	return min + time.Duration(rand.Int64N(int64(max-min)))
+}
+
+// waitForActiveHours blocks until the current time is inside the active window,
+// re-checking periodically. Returns false if the loop is cancelled.
+func (f *Farmer) waitForActiveHours(ctx context.Context) bool {
+	announced := false
+	for !f.inActiveWindow(time.Now()) {
+		if !announced {
+			f.logger.Info("outside active hours — pausing", "start", f.cfg.ActiveStartHour, "end", f.cfg.ActiveEndHour)
+			announced = true
+		}
+		if !sleepCtx(ctx, activeCheckInterval) {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *Farmer) inActiveWindow(t time.Time) bool {
+	s, e := f.cfg.ActiveStartHour, f.cfg.ActiveEndHour
+	if s == e {
+		return true // active all day
+	}
+	h := t.Hour()
+	if s < e {
+		return h >= s && h < e
+	}
+	return h >= s || h < e // window wraps past midnight
+}
+
+// waitForDailyQuota blocks while today's hunt cap is hit, until the day rolls
+// over. Returns false if the loop is cancelled.
+func (f *Farmer) waitForDailyQuota(ctx context.Context) bool {
+	if f.cfg.DailyHuntLimit <= 0 {
+		return true
+	}
+	announced := false
+	for f.quotaReached() {
+		if !announced {
+			f.logger.Info("daily hunt limit reached — pausing until tomorrow", "limit", f.cfg.DailyHuntLimit)
+			announced = true
+		}
+		if !sleepCtx(ctx, quotaCheckInterval) {
+			return false
+		}
+	}
+	return true
+}
+
+// quotaReached resets the counter on a new day, then reports whether the cap is hit.
+func (f *Farmer) quotaReached() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rolloverLocked()
+	return f.huntsToday >= f.cfg.DailyHuntLimit
+}
+
+func (f *Farmer) recordHunt() {
+	f.mu.Lock()
+	f.rolloverLocked()
+	f.huntsToday++
+	f.mu.Unlock()
+}
+
+func (f *Farmer) rolloverLocked() {
+	if day := time.Now().YearDay(); day != f.huntDay {
+		f.huntDay = day
+		f.huntsToday = 0
+	}
+}
+
+// maybeGamble plays one coinflip during a break, if enabled and under both the
+// per-day count cap (the hard safety) and the daily net-loss limit. Coinflip is
+// negative expected value — these caps bound the damage.
+func (f *Farmer) maybeGamble(ctx context.Context) {
+	if !f.cfg.GambleEnabled || f.cfg.GambleMaxPerDay <= 0 {
+		return
+	}
+
+	f.mu.Lock()
+	f.gambleRolloverLocked()
+	overLoss := f.cfg.GambleDailyLossLimit > 0 && f.gambleNet <= -f.cfg.GambleDailyLossLimit
+	if f.gamblesToday >= f.cfg.GambleMaxPerDay || overLoss || f.pendingBet != 0 {
+		f.mu.Unlock()
+		return
+	}
+	bet := f.cfg.GambleBetMin
+	if span := f.cfg.GambleBetMax - f.cfg.GambleBetMin; span > 0 {
+		bet += rand.IntN(span + 1)
+	}
+	f.gamblesToday++
+	f.pendingBet = bet
+	f.mu.Unlock()
+
+	f.logger.Info("coinflip bet", "amount", bet)
+	if err := f.client.Coinflip(ctx, bet); err != nil {
+		f.logger.Warn("coinflip send failed", "err", err)
+		f.mu.Lock()
+		f.pendingBet = 0
+		f.mu.Unlock()
+	}
+}
+
+// resolveGamble applies a coinflip win/loss to today's net. It is gated on a
+// pending bet, so unrelated messages are ignored.
+func (f *Farmer) resolveGamble(content string) {
+	f.mu.Lock()
+	bet := f.pendingBet
+	if bet == 0 {
+		f.mu.Unlock()
+		return
+	}
+	f.pendingBet = 0
+	won := owo.IsCoinflipWin(content)
+	if won {
+		f.gambleNet += bet
+	} else {
+		f.gambleNet -= bet
+	}
+	net := f.gambleNet
+	hitLimit := f.cfg.GambleDailyLossLimit > 0 && net <= -f.cfg.GambleDailyLossLimit && !f.gambleStopped
+	if hitLimit {
+		f.gambleStopped = true
+	}
+	f.mu.Unlock()
+
+	f.logger.Debug("coinflip raw result", "content", truncate(content, 200))
+	f.logger.Info("coinflip result", "won", won, "bet", bet, "net_today", net)
+	if won {
+		f.reply(fmt.Sprintf("🪙 kazandın +%d  (bugün net: %d)", bet, net))
+	} else {
+		f.reply(fmt.Sprintf("🪙 kaybettin -%d  (bugün net: %d)", bet, net))
+	}
+	if hitLimit {
+		f.alert(alert.Warn, fmt.Sprintf("Coinflip günlük kayıp limiti aşıldı (bugün net: %d cowoncy). Kumar bugünlük durduruldu.", net))
+	}
+}
+
+// GambleOnce plays a single coinflip immediately (a manual test command). It
+// ignores the GambleEnabled flag and the daily caps — it's a deliberate one-off.
+func (f *Farmer) GambleOnce() {
+	f.mu.Lock()
+	if f.pendingBet != 0 {
+		f.mu.Unlock()
+		f.reply("önceki coinflip sonucu bekleniyor, birazdan tekrar dene")
+		return
+	}
+	bet := f.cfg.GambleBetMin
+	if span := f.cfg.GambleBetMax - f.cfg.GambleBetMin; span > 0 {
+		bet += rand.IntN(span + 1)
+	}
+	if bet <= 0 {
+		bet = 50000
+	}
+	f.pendingBet = bet
+	f.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), oneShotTimeout)
+	defer cancel()
+	f.logger.Info("manual coinflip test", "amount", bet)
+	f.reply(fmt.Sprintf("🪙 test coinflip: %d bahis gönderiliyor...", bet))
+	if err := f.client.Coinflip(ctx, bet); err != nil {
+		f.logger.Warn("coinflip send failed", "err", err)
+		f.reply("coinflip gönderilemedi (token/ağ?)")
+		f.mu.Lock()
+		f.pendingBet = 0
+		f.mu.Unlock()
+	}
+}
+
+func (f *Farmer) gambleRolloverLocked() {
+	if day := time.Now().YearDay(); day != f.gambleDay {
+		f.gambleDay = day
+		f.gamblesToday = 0
+		f.gambleNet = 0
+		f.gambleStopped = false
+		f.pendingBet = 0
+	}
+}
+
+// sendHumanMessage posts a varied message from the pool (humanize + maybe XP),
+// throttled so it never spams faster than once per humanMsgMinInterval.
+func (f *Farmer) sendHumanMessage(ctx context.Context) {
+	pool := f.cfg.HumanMessages
+	if len(pool) == 0 {
+		return
+	}
+	f.mu.Lock()
+	if !f.lastHuman.IsZero() && time.Since(f.lastHuman) < humanMsgMinInterval {
+		f.mu.Unlock()
+		return
+	}
+	f.lastHuman = time.Now()
+	f.mu.Unlock()
+
+	if err := f.client.Send(ctx, pool[rand.IntN(len(pool))]); err != nil {
+		f.logger.Warn("human message failed", "err", err)
+	}
+}
+
+// jitter returns d scaled by a random factor in [1-frac, 1+frac].
+func jitter(d time.Duration, frac float64) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return time.Duration(float64(d) * (1 + (rand.Float64()*2-1)*frac))
 }
 
 func (f *Farmer) reply(text string) {
@@ -461,14 +707,6 @@ func (f *Farmer) reply(text string) {
 
 func (f *Farmer) alert(level alert.Level, text string) {
 	f.notify.Notify(context.Background(), level, text)
-}
-
-func randomText(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = coverCharset[rand.IntN(len(coverCharset))]
-	}
-	return string(b)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

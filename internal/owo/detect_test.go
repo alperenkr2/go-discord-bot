@@ -89,6 +89,38 @@ func TestBuildUseCommandNoGems(t *testing.T) {
 	}
 }
 
+func TestCoinflip(t *testing.T) {
+	win := "**SERDAR ORTAC** spent **<:cowoncy:416043450337853441> 50,000** and chose **heads**\n" +
+		"The coin spins... <:head:436677933977960478> and you won **<:cowoncy:416043450337853441> 100,000**!!"
+	loss := "**SERDAR ORTAC** spent **<:cowoncy:416043450337853441> 20,000** and chose **heads**\n" +
+		"The coin spins... <:tail:436677926398853120> and you lost it all... :c"
+
+	if !IsCoinflipResult(win) {
+		t.Error("win message should be detected as a coinflip result")
+	}
+	if !IsCoinflipResult(loss) {
+		t.Error("loss message should be detected as a coinflip result")
+	}
+	if !IsCoinflipWin(win) {
+		t.Error("win message should be a win")
+	}
+	if IsCoinflipWin(loss) {
+		t.Error("loss message should not be a win")
+	}
+	if IsCoinflipResult("**alper** caught a common **dog**!") {
+		t.Error("a hunt result must not be mistaken for a coinflip")
+	}
+
+	// OwO posts this first, then edits it to add the outcome. The placeholder
+	// must NOT be treated as a settled result (the original bug: it has no "lost"
+	// yet, so it mis-read as a win).
+	spinning := "**SERDAR ORTAC** spent **<:cowoncy:1> 88,303** and chose **heads**\n" +
+		"The coin spins... <a:coin:2>"
+	if IsCoinflipResult(spinning) {
+		t.Error("the pre-result 'coin spins...' placeholder must not be a settled result")
+	}
+}
+
 func TestParseWeaponCrates(t *testing.T) {
 	// Real OwO inventory format: `CODE`<:emoji:id> then quantity in superscript.
 	inv := "`056`<:mgem1:492572122590478356>⁰⁰⁹    `100`<a:weaponcrate:725570544065445919>⁵⁷⁴    `101`<:box:427352600476647425>⁰⁰⁶"

@@ -135,6 +135,11 @@ func (c *Client) Pray(ctx context.Context) error             { return c.Send(ctx
 func (c *Client) Inventory(ctx context.Context) error        { return c.Send(ctx, "owo inv") }
 func (c *Client) OpenWeaponCrates(ctx context.Context) error { return c.Send(ctx, "owo wc all") }
 
+// Coinflip bets amount cowoncy on a coinflip ("owo cf <amount>").
+func (c *Client) Coinflip(ctx context.Context, amount int) error {
+	return c.Send(ctx, "owo cf "+strconv.Itoa(amount))
+}
+
 // Battle attacks; if friendID is set it battles that user.
 func (c *Client) Battle(ctx context.Context, friendID string) error {
 	cmd := "owo b"

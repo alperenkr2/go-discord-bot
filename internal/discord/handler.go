@@ -100,6 +100,8 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		h.farmer.StartSell(m.ChannelID)
 	case "ping":
 		go h.ping(m.ChannelID, m.ID)
+	case "cftest":
+		go h.farmer.GambleOnce()
 	}
 }
 

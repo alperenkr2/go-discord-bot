@@ -36,7 +36,25 @@ type Config struct {
 	BreakEvery           int           // take a long break every N cycles
 	BreakDuration        time.Duration // length of the long break
 	CaptchaReminderEvery time.Duration // re-alert interval while a captcha is pending
-	CoverMessage         bool          // send the "Xs cooldown ..." cover message
+	CoverMessage         bool          // send a varied human-like chat message each cycle (humanize + XP)
+
+	// Humanization (anti-captcha): the bot sleeps outside active hours, caps
+	// hunts per day, and inserts long random breaks so the pattern looks human.
+	ActiveStartHour int           // hour (0-23) the bot becomes active
+	ActiveEndHour   int           // hour (0-23) the bot goes idle; wraps past midnight if start > end
+	DailyHuntLimit  int           // max hunts per day (0 = unlimited)
+	LongBreakEvery  int           // insert a long break roughly every N cycles (0 = off)
+	LongBreakMin    time.Duration // shortest long break
+	LongBreakMax    time.Duration // longest long break
+	HumanMessages   []string      // pool of varied messages sent to the channel
+
+	// Gambling (coinflip only, opt-in). Negative expected value — bounded by hard
+	// daily caps. Off unless GambleEnabled is true.
+	GambleEnabled        bool
+	GambleBetMin         int
+	GambleBetMax         int
+	GambleMaxPerDay      int // hard cap on coinflips per day (primary safety net)
+	GambleDailyLossLimit int // stop for the day once net loss hits this (needs result detection)
 
 	// Logging
 	LogLevel slog.Level
@@ -44,6 +62,20 @@ type Config struct {
 }
 
 var channelIDRe = regexp.MustCompile(`channels/(\d+)/messages`)
+
+// defaultHumanMessages are varied so OwO's anti-spam is less likely to flag them.
+var defaultHumanMessages = []string{
+	"günaydın",
+	"iyi akşamlar",
+	"pocik erimse ntracı",
+	"nasılsınız",
+	"selam",
+	"merhaba",
+	"beyaz yakalı emre",
+	"ne var ne yok",
+	"bu azizi kim aldı azizi",
+	"yariliyom valla donuma sıctım",
+}
 
 // Load reads configuration from the environment. A .env file is loaded when
 // present but is entirely optional — real environment variables work too.
@@ -60,13 +92,27 @@ func Load() *Config {
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramChatID:   os.Getenv("TELEGRAM_CHAT_ID"),
 
-		DelayMin:             envSeconds("DELAY_MIN_SECONDS", 30*time.Second),
-		DelayMax:             envSeconds("DELAY_MAX_SECONDS", 120*time.Second),
+		DelayMin:             envSeconds("DELAY_MIN_SECONDS", 60*time.Second),
+		DelayMax:             envSeconds("DELAY_MAX_SECONDS", 180*time.Second),
 		FastDelay:            envSeconds("FAST_DELAY_SECONDS", 13*time.Second),
 		BreakEvery:           envInt("BREAK_EVERY", 10),
 		BreakDuration:        envSeconds("BREAK_SECONDS", 240*time.Second),
 		CaptchaReminderEvery: envSeconds("CAPTCHA_REMINDER_SECONDS", 60*time.Second),
 		CoverMessage:         envBool("COVER_MESSAGE", true),
+
+		ActiveStartHour: envHour("ACTIVE_START_HOUR", 10),
+		ActiveEndHour:   envHour("ACTIVE_END_HOUR", 2),
+		DailyHuntLimit:  envInt("DAILY_HUNT_LIMIT", 450),
+		LongBreakEvery:  envInt("LONG_BREAK_EVERY", 30),
+		LongBreakMin:    envSeconds("LONG_BREAK_MIN_SECONDS", 300*time.Second),
+		LongBreakMax:    envSeconds("LONG_BREAK_MAX_SECONDS", 1200*time.Second),
+		HumanMessages:   envCSV("HUMAN_MESSAGES", defaultHumanMessages),
+
+		GambleEnabled:        envBool("GAMBLE_ENABLED", false),
+		GambleBetMin:         envInt("GAMBLE_BET_MIN", 50000),
+		GambleBetMax:         envInt("GAMBLE_BET_MAX", 100000),
+		GambleMaxPerDay:      envInt("GAMBLE_MAX_PER_DAY", 10),
+		GambleDailyLossLimit: envInt("GAMBLE_DAILY_LOSS_LIMIT", 500000),
 
 		LogLevel: parseLevel(os.Getenv("LOG_LEVEL")),
 		LogFile:  os.Getenv("LOG_FILE"),
@@ -79,6 +125,18 @@ func Load() *Config {
 	}
 	if cfg.DelayMax < cfg.DelayMin {
 		cfg.DelayMax = cfg.DelayMin
+	}
+	if cfg.DailyHuntLimit < 0 {
+		cfg.DailyHuntLimit = 0
+	}
+	if cfg.LongBreakMax < cfg.LongBreakMin {
+		cfg.LongBreakMax = cfg.LongBreakMin
+	}
+	if cfg.GambleBetMin < 0 {
+		cfg.GambleBetMin = 0
+	}
+	if cfg.GambleBetMax < cfg.GambleBetMin {
+		cfg.GambleBetMax = cfg.GambleBetMin
 	}
 
 	return cfg
@@ -137,6 +195,30 @@ func envSeconds(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+func envHour(key string, def int) int {
+	if n := envInt(key, def); n >= 0 && n <= 23 {
+		return n
+	}
+	return def
+}
+
+func envCSV(key string, def []string) []string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return def
+	}
+	return out
 }
 
 func envInt(key string, def int) int {

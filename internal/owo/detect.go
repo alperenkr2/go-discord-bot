@@ -66,3 +66,18 @@ func IsCaught(content string) bool {
 func IsInventory(content string) bool {
 	return strings.Contains(stripInvisible(content), "Inventory")
 }
+
+// IsCoinflipResult reports whether content is a *settled* OwO coinflip result.
+// OwO first posts "The coin spins..." and then EDITS the message to add the
+// outcome, so we must match the final wording ("you won" / "lost it all") — not
+// the "spins" placeholder, which (having no "lost" yet) would look like a win.
+func IsCoinflipResult(content string) bool {
+	c := normalize(content)
+	return strings.Contains(c, "you won") || strings.Contains(c, "lost it all")
+}
+
+// IsCoinflipWin reports whether a coinflip result is a win. The loss message is
+// the only one containing "lost".
+func IsCoinflipWin(content string) bool {
+	return !strings.Contains(normalize(content), "lost")
+}
