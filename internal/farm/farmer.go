@@ -30,6 +30,7 @@ const (
 	quotaCheckInterval  = 10 * time.Minute // re-check while the daily hunt cap is hit
 	humanMsgMinInterval = 50 * time.Second // floor between human-like chat messages
 	breakJitterFraction = 0.30             // ± jitter applied to break durations
+	replenishCooldown   = 5 * time.Minute  // min gap between lootbox-replenish attempts
 
 	captchaMsg         = "CAPTCHA/BAN algılandı! OwO farming durduruldu. Captcha'yı çöz, sonra kanala 'sa' (sustur) veya 'owoh' (devam) yaz."
 	captchaReminderMsg = "CAPTCHA hâlâ bekliyor — farming durmuş durumda. Çözünce 'owoh' ile devam et, 'dur' ile tamamen durdur."
@@ -41,11 +42,14 @@ type commander interface {
 	Send(ctx context.Context, content string) error
 	Hunt(ctx context.Context) error
 	Battle(ctx context.Context, friendID string) error
-	Pray(ctx context.Context) error
+	Pray(ctx context.Context, targetID string) error
 	Inventory(ctx context.Context) error
 	OpenWeaponCrates(ctx context.Context) error
+	OpenLootboxes(ctx context.Context) error
 	SellWeapons(ctx context.Context) error
 	Coinflip(ctx context.Context, amount int) error
+	Daily(ctx context.Context) error
+	Cookie(ctx context.Context, targetID string) error
 }
 
 // messenger is the subset of *discordgo.Session used to post status replies.
@@ -76,6 +80,8 @@ type Farmer struct {
 	gambleNet     int                // net cowoncy from today's coinflips
 	pendingBet    int                // bet awaiting a result (0 = none)
 	gambleStopped bool               // loss-limit alert already sent today
+	dailyTasksDay int                // YearDay daily tasks last ran
+	lastReplenish time.Time          // last lootbox-replenish time (throttle)
 	cancel        context.CancelFunc // cancels the farm loop
 	captchaCancel context.CancelFunc // cancels the captcha reminder
 	sellCancel    context.CancelFunc // cancels an in-progress sell/crate-open flow
@@ -178,9 +184,12 @@ func (f *Farmer) HandleOwO(content string) {
 		}
 		if cmd, ok := owo.BuildUseCommand(content); ok {
 			f.reply("gem bitmiş, takviye yapılıyor")
-			f.runOneShot("use gems", func(ctx context.Context) error {
+			go f.runOneShot("use gems", func(ctx context.Context) error {
+				sleepCtx(ctx, f.cfg.CommandGap) // give OwO a moment to keep up
 				return f.client.Send(ctx, cmd)
 			})
+		} else if f.cfg.LootboxReplenish {
+			f.replenishGems()
 		}
 	case owo.IsCoinflipResult(content):
 		f.resolveGamble(content)
@@ -214,6 +223,9 @@ func (f *Farmer) run(ctx context.Context) {
 		if !f.waitForDailyQuota(ctx) {
 			return
 		}
+		if f.runDailyTasks(ctx) {
+			return
+		}
 
 		fast, friend := f.snapshot()
 
@@ -244,7 +256,7 @@ func (f *Farmer) run(ctx context.Context) {
 			if !sleepCtx(ctx, 2*time.Second) {
 				return
 			}
-			if f.do(ctx, f.client.Pray) {
+			if f.do(ctx, func(c context.Context) error { return f.client.Pray(c, f.cfg.PrayTargetID) }) {
 				return
 			}
 			f.reply(fmt.Sprintf("%d kere çalıştım, azıcık mola veriyorum", i+1))
@@ -663,6 +675,70 @@ func (f *Farmer) gambleRolloverLocked() {
 		f.gambleStopped = false
 		f.pendingBet = 0
 	}
+}
+
+// runDailyTasks runs owo daily (and a cookie to the configured target) once per
+// day. Returns true if the loop should stop (fatal send error).
+func (f *Farmer) runDailyTasks(ctx context.Context) (stop bool) {
+	if !f.cfg.DailyTasks {
+		return false
+	}
+	f.mu.Lock()
+	day := time.Now().YearDay()
+	if day == f.dailyTasksDay {
+		f.mu.Unlock()
+		return false
+	}
+	f.dailyTasksDay = day
+	f.mu.Unlock()
+
+	f.logger.Info("daily tasks: owo daily")
+	if f.do(ctx, f.client.Daily) {
+		return true
+	}
+	if f.cfg.CookieTargetID != "" {
+		if !sleepCtx(ctx, f.cfg.CommandGap) {
+			return true
+		}
+		f.logger.Info("daily tasks: cookie", "target", f.cfg.CookieTargetID)
+		if f.do(ctx, func(c context.Context) error { return f.client.Cookie(c, f.cfg.CookieTargetID) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// replenishGems opens lootboxes (which contain gems) then re-checks the
+// inventory, with a gap so OwO keeps up. The re-check's "Inventory" message
+// re-triggers gem use via HandleOwO. Throttled by replenishCooldown so it never
+// spams when lootboxes are out.
+func (f *Farmer) replenishGems() {
+	f.mu.Lock()
+	if !f.lastReplenish.IsZero() && time.Since(f.lastReplenish) < replenishCooldown {
+		f.mu.Unlock()
+		return
+	}
+	f.lastReplenish = time.Now()
+	f.mu.Unlock()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), oneShotTimeout)
+		defer cancel()
+
+		f.logger.Info("gems out — opening lootboxes to replenish")
+		f.reply("gem bitti, lootbox açılıyor...")
+		if err := f.client.OpenLootboxes(ctx); err != nil {
+			f.logger.Warn("lootbox open failed", "err", err)
+			return
+		}
+		if !sleepCtx(ctx, f.cfg.CommandGap) {
+			return
+		}
+		if err := f.client.Inventory(ctx); err != nil {
+			f.logger.Warn("inventory recheck failed", "err", err)
+		}
+		// the inventory response re-triggers gem use in HandleOwO
+	}()
 }
 
 // sendHumanMessage posts a varied message from the pool (humanize + maybe XP),

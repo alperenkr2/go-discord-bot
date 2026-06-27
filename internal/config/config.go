@@ -56,6 +56,14 @@ type Config struct {
 	GambleMaxPerDay      int // hard cap on coinflips per day (primary safety net)
 	GambleDailyLossLimit int // stop for the day once net loss hits this (needs result detection)
 
+	// Farm-account helpers (for a money-farming alt account). All opt-in.
+	PrayTargetID     string        // PRAY_TARGET_ID — "owo pray <@id>" instead of plain pray
+	CookieTargetID   string        // COOKIE_TARGET_ID — daily "owo cookie <@id>"
+	DailyTasks       bool          // DAILY_TASKS — run owo daily (+ cookie) once per day
+	LootboxReplenish bool          // LOOTBOX_REPLENISH — open lootboxes when gems run out
+	CommandGap       time.Duration // gap between chained commands (gem flow / daily tasks)
+	AutoStart        bool          // AUTO_START — begin farming on launch (no "owoh" needed)
+
 	// Logging
 	LogLevel slog.Level
 	LogFile  string // optional; logs are tee'd here in addition to stderr
@@ -113,6 +121,13 @@ func Load() *Config {
 		GambleBetMax:         envInt("GAMBLE_BET_MAX", 100000),
 		GambleMaxPerDay:      envInt("GAMBLE_MAX_PER_DAY", 10),
 		GambleDailyLossLimit: envInt("GAMBLE_DAILY_LOSS_LIMIT", 500000),
+
+		PrayTargetID:     os.Getenv("PRAY_TARGET_ID"),
+		CookieTargetID:   os.Getenv("COOKIE_TARGET_ID"),
+		DailyTasks:       envBool("DAILY_TASKS", false),
+		LootboxReplenish: envBool("LOOTBOX_REPLENISH", false),
+		CommandGap:       envSeconds("COMMAND_GAP_SECONDS", 3*time.Second),
+		AutoStart:        envBool("AUTO_START", false),
 
 		LogLevel: parseLevel(os.Getenv("LOG_LEVEL")),
 		LogFile:  os.Getenv("LOG_FILE"),

@@ -131,9 +131,23 @@ func (c *Client) throttle() {
 // --- typed command helpers -------------------------------------------------
 
 func (c *Client) Hunt(ctx context.Context) error             { return c.Send(ctx, "owo h") }
-func (c *Client) Pray(ctx context.Context) error             { return c.Send(ctx, "owo pray") }
 func (c *Client) Inventory(ctx context.Context) error        { return c.Send(ctx, "owo inv") }
 func (c *Client) OpenWeaponCrates(ctx context.Context) error { return c.Send(ctx, "owo wc all") }
+func (c *Client) OpenLootboxes(ctx context.Context) error    { return c.Send(ctx, "owo lb all") }
+func (c *Client) Daily(ctx context.Context) error            { return c.Send(ctx, "owo daily") }
+
+// Pray sends a prayer, optionally for a target user ("owo pray <@id>").
+func (c *Client) Pray(ctx context.Context, targetID string) error {
+	if targetID != "" {
+		return c.Send(ctx, "owo pray <@"+targetID+">")
+	}
+	return c.Send(ctx, "owo pray")
+}
+
+// Cookie gives a daily cookie to a target user ("owo cookie <@id>").
+func (c *Client) Cookie(ctx context.Context, targetID string) error {
+	return c.Send(ctx, "owo cookie <@"+targetID+">")
+}
 
 // Coinflip bets amount cowoncy on a coinflip ("owo cf <amount>").
 func (c *Client) Coinflip(ctx context.Context, amount int) error {

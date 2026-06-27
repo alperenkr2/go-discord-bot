@@ -19,11 +19,14 @@ type fakeCommander struct{}
 func (fakeCommander) Send(context.Context, string) error     { return nil }
 func (fakeCommander) Hunt(context.Context) error             { return nil }
 func (fakeCommander) Battle(context.Context, string) error   { return nil }
-func (fakeCommander) Pray(context.Context) error             { return nil }
+func (fakeCommander) Pray(context.Context, string) error     { return nil }
 func (fakeCommander) Inventory(context.Context) error        { return nil }
 func (fakeCommander) OpenWeaponCrates(context.Context) error { return nil }
+func (fakeCommander) OpenLootboxes(context.Context) error    { return nil }
 func (fakeCommander) SellWeapons(context.Context) error      { return nil }
 func (fakeCommander) Coinflip(context.Context, int) error    { return nil }
+func (fakeCommander) Daily(context.Context) error            { return nil }
+func (fakeCommander) Cookie(context.Context, string) error   { return nil }
 
 type fakeMessenger struct{}
 

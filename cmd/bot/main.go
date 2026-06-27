@@ -53,6 +53,11 @@ func main() {
 	logger.Info("bot çevrimiçi")
 	notifier.Notify(context.Background(), alert.Info, "OwO bot açıldı ve çalışıyor.")
 
+	if cfg.AutoStart && cfg.ChannelID != "" {
+		logger.Info("auto-start: farming başlatılıyor", "channel", cfg.ChannelID)
+		farmer.Start(cfg.ChannelID)
+	}
+
 	<-ctx.Done()
 
 	logger.Info("kapatılıyor")
