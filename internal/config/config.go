@@ -74,6 +74,7 @@ var channelIDRe = regexp.MustCompile(`channels/(\d+)/messages`)
 // defaultHumanMessages are varied so OwO's anti-spam is less likely to flag them.
 var defaultHumanMessages = []string{
 	"günaydın",
+	"owo",
 	"iyi akşamlar",
 	"pocik erimse ntracı",
 	"nasılsınız",
