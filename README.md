@@ -1,10 +1,10 @@
-# OwO Farm Bot
+# Eforsuz cash
 
 OwO Discord botu için komutları otomatik çalıştıran (hunt / battle / pray / gem /
 weapon satışı) bir yardımcı bot. Captcha veya hata durumunda **Telegram'a push
 bildirim** ve kanalda mention ile seni uyarır.
 
-> ⚠️ Not: OwO otomasyonu Discord ve OwO kullanım şartlarına aykırıdır ve hesap
+> ⚠️ Not: bu bot Discord ve OwO kullanım şartlarına aykırıdır ve hesap
 > banlanma riski taşır. Kendi sorumluluğunda kullan. Captcha tespiti tam da bu
 > riski azaltmak içindir — captcha gelince bot **anında durur** ve seni uyarır.
 
